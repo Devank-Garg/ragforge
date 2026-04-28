@@ -8,13 +8,19 @@
     "type": "git",
     "url": "https://github.com/Devank-Garg/ragforge"
   },
+  "engines": {
+    "node": ">=16.7.0"
+  },
+  "bin": {
+    "rag-skills": "./bin/install.js"
+  },
   "files": [
+    "bin/",
     "rag-workflow/",
     "rag-ingestion/",
     "rag-retrieval/",
     "rag-eval/",
     "rag-observe/",
-    "rag-deploy/",
     "SKILLS.md"
   ]
 }
