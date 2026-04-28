@@ -1,0 +1,25 @@
+[project]
+name = "ragforge-skills"
+version = "0.1.0"
+description = "RAG development skills for coding agents"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.9"
+keywords = ["rag", "skills", "claude-code", "gemini-cli", "llm", "ai-agent"]
+
+[project.scripts]
+ragforge-skills = "ragforge_skills.install:main"
+
+[tool.hatch.build.targets.wheel]
+include = [
+  "ragforge_skills/**",
+  "ragforge-workflow/**",
+  "ragforge-ingestion/**",
+  "ragforge-retrieval/**",
+  "ragforge-eval/**",
+  "ragforge-observe/**",
+  "ragforge-deploy/**"
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
