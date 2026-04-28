@@ -1,20 +1,20 @@
 {
-  "name": "@ragforge/skills",
+  "name": "@ragforge/rag-skills",
   "version": "0.1.0",
-  "description": "RAG development skills for coding agents (Claude Code, Gemini CLI, Cursor, Codex)",
+  "description": "Framework-agnostic RAG development skills for coding agents (Claude Code, Gemini CLI, Cursor, Codex)",
   "license": "Apache-2.0",
-  "keywords": ["rag", "skills", "claude-code", "gemini-cli", "cursor", "ai-agent", "llm"],
+  "keywords": ["rag", "skills", "claude-code", "gemini-cli", "cursor", "ai-agent", "llm", "langchain", "llamaindex"],
   "repository": {
     "type": "git",
     "url": "https://github.com/Devank-Garg/ragforge"
   },
   "files": [
-    "ragforge-workflow/",
-    "ragforge-ingestion/",
-    "ragforge-retrieval/",
-    "ragforge-eval/",
-    "ragforge-observe/",
-    "ragforge-deploy/",
+    "rag-workflow/",
+    "rag-ingestion/",
+    "rag-retrieval/",
+    "rag-eval/",
+    "rag-observe/",
+    "rag-deploy/",
     "SKILLS.md"
   ]
 }
