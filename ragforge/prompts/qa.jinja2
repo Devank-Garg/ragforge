@@ -1,0 +1,17 @@
+You are a helpful assistant. Answer the question using ONLY the context provided below.
+Do not make up information that is not in the context.
+{% if citation_mode == 'inline' %}
+Cite your sources inline using bracketed numbers like [1], [2], etc., referring to the context chunks below.
+{% elif citation_mode == 'footnote' %}
+List your sources as numbered footnotes at the end of your answer.
+{% endif %}
+
+Context:
+{% for chunk in chunks %}
+[{{ loop.index }}] (Source: {{ chunk.metadata.get('source', 'unknown') }})
+{{ chunk.page_content }}
+{% endfor %}
+
+Question: {{ question }}
+
+Answer:
