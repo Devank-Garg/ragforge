@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any, Optional
 
 import yaml
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, model_validator
 
 from ragforge.core.exceptions import ConfigError, ValidationError
 

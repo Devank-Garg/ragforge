@@ -2,21 +2,39 @@ from __future__ import annotations
 
 from typing import Any
 
-import questionary
-from questionary import Style
+from InquirerPy import inquirer
+from InquirerPy.base.control import Choice
+from InquirerPy.separator import Separator
+from InquirerPy.utils import get_style
+from rich.console import Console
+from rich.prompt import Confirm
 
-from ragforge.core.config import _MODEL_TOKEN_LIMITS, _DEFAULT_TOKEN_LIMIT
+from ragforge.core.config import _DEFAULT_TOKEN_LIMIT, _MODEL_TOKEN_LIMITS
 
-_STYLE = Style([
-    ("qmark", "fg:#00bcd4 bold"),
-    ("question", "bold"),
-    ("answer", "fg:#00bcd4 bold"),
-    ("pointer", "fg:#00bcd4 bold"),
-    ("highlighted", "fg:#00bcd4 bold"),
-    ("selected", "fg:#00bcd4"),
-    ("separator", "fg:#6c6c6c"),
-    ("instruction", "fg:#6c6c6c"),
-])
+_console = Console()
+
+_BACK = object()
+_BACK_VALUE = "__back__"
+
+_STYLE = get_style({
+    "question":    "bold",
+    "answer":      "fg:#00bcd4 bold",
+    "pointer":     "fg:#00bcd4 bold",
+    "highlighted": "fg:#000000 bg:#00bcd4 bold",
+    "selected":    "fg:#00bcd4",
+    "checkbox":    "fg:#00bcd4",
+    "instruction": "fg:#6c6c6c",
+    "separator":   "fg:#6c6c6c",
+})
+
+_KEYBINDINGS = {
+    "toggle": [{"key": "space"}],
+    "toggle-all": [{"key": "a"}],
+}
+
+_HINT_SELECT   = "(arrow keys · Ctrl+C to exit · Esc to go back)"
+_HINT_CHECKBOX = "(space to select · Ctrl+C to exit · Esc to go back)"
+_HINT_TEXT     = "(Ctrl+C to exit · leave blank + Enter to go back)"
 
 _EMBEDDING_MODELS = [
     "openai/text-embedding-3-small",
@@ -38,237 +56,437 @@ _LLM_MODELS = [
 ]
 
 
-def run_wizard() -> dict[str, Any]:
-    answers: dict[str, Any] = {}
+# ── helpers ───────────────────────────────────────────────────────────────────
 
-    # Screen 0 — Project
-    answers["project_name"] = questionary.text(
-        "Project name:",
+def _section(title: str) -> None:
+    _console.print(f"\n[bold cyan]{title}[/bold cyan]")
+
+
+def _select(
+    question: str,
+    choices: list[str],
+    default: str | None = None,
+    can_go_back: bool = True,
+) -> Any:
+    all_choices: list = []
+    if can_go_back:
+        all_choices.append(Choice(value=_BACK_VALUE, name="← Back"))
+        all_choices.append(Separator())
+    all_choices += choices
+
+    result = inquirer.select(
+        message=question,
+        choices=all_choices,
+        default=default if default in choices else None,
+        instruction=_HINT_SELECT,
+        qmark="",
+        amark="›",
         style=_STYLE,
-    ).ask()
+        vi_mode=False,
+    ).execute()
 
-    answers["project_description"] = questionary.text(
-        "Short description (optional):",
-        default="",
+    if result is None or result == _BACK_VALUE:
+        return _BACK
+    return result
+
+
+def _checkbox(
+    question: str,
+    choices: list[str],
+    defaults: list[str] | None = None,
+    can_go_back: bool = True,
+) -> Any:
+    defaults = defaults or []
+    all_choices: list = []
+    if can_go_back:
+        all_choices.append(Choice(value=_BACK_VALUE, name="← Back"))
+        all_choices.append(Separator())
+    all_choices += [
+        Choice(value=c, name=c, enabled=(c in defaults))
+        for c in choices
+    ]
+
+    result = inquirer.checkbox(
+        message=question,
+        choices=all_choices,
+        instruction=_HINT_CHECKBOX,
+        qmark="",
+        amark="›",
         style=_STYLE,
-    ).ask()
+        keybindings=_KEYBINDINGS,
+        validate=lambda x: _BACK_VALUE in x or len([v for v in x if v != _BACK_VALUE]) > 0,
+        invalid_message="Select at least one option (or ← Back).",
+    ).execute()
 
-    # Screen 1 — Document types
-    answers["document_types"] = questionary.checkbox(
+    if result is None or _BACK_VALUE in result:
+        return _BACK
+    return result
+
+
+def _text(
+    question: str,
+    default: str = "",
+    can_go_back: bool = True,
+) -> Any:
+    hint = _HINT_TEXT if can_go_back else "(Ctrl+C to exit)"
+    result = inquirer.text(
+        message=question,
+        default=default,
+        instruction=hint,
+        qmark="",
+        amark="›",
+        style=_STYLE,
+    ).execute()
+
+    if result is None:
+        return _BACK
+    if can_go_back and result.strip() == "":
+        return _BACK
+    return result
+
+
+def _text_required(question: str, default: str = "", can_go_back: bool = True) -> Any:
+    """Text prompt that requires a non-empty value (back still allowed via empty on first screen)."""
+    hint = _HINT_TEXT if can_go_back else "(Ctrl+C to exit)"
+    result = inquirer.text(
+        message=question,
+        default=default,
+        instruction=hint,
+        qmark="",
+        amark="›",
+        style=_STYLE,
+        validate=lambda v: len(v.strip()) > 0,
+        invalid_message="This field is required.",
+    ).execute()
+
+    if result is None:
+        return _BACK
+    return result
+
+
+def _int(
+    question: str,
+    default: int,
+    min_val: int = 1,
+    max_val: int = 999999,
+    can_go_back: bool = True,
+) -> Any:
+    hint = _HINT_TEXT if can_go_back else "(Ctrl+C to exit)"
+
+    def _validate(raw: str) -> bool:
+        if can_go_back and raw.strip() == "":
+            return True
+        return raw.isdigit() and min_val <= int(raw) <= max_val
+
+    result = inquirer.text(
+        message=question,
+        default=str(default),
+        instruction=hint,
+        qmark="",
+        amark="›",
+        style=_STYLE,
+        validate=_validate,
+        invalid_message=f"Enter a number between {min_val} and {max_val}.",
+    ).execute()
+
+    if result is None or (can_go_back and result.strip() == ""):
+        return _BACK
+    return int(result)
+
+
+def _float01(
+    question: str,
+    default: float,
+    can_go_back: bool = True,
+) -> Any:
+    hint = _HINT_TEXT if can_go_back else "(Ctrl+C to exit)"
+
+    def _validate(raw: str) -> bool:
+        if can_go_back and raw.strip() == "":
+            return True
+        try:
+            return 0.0 <= float(raw) <= 1.0
+        except ValueError:
+            return False
+
+    result = inquirer.text(
+        message=question,
+        default=str(default),
+        instruction=hint,
+        qmark="",
+        amark="›",
+        style=_STYLE,
+        validate=_validate,
+        invalid_message="Enter a decimal between 0.0 and 1.0.",
+    ).execute()
+
+    if result is None or (can_go_back and result.strip() == ""):
+        return _BACK
+    return float(result)
+
+
+# ── wizard steps ──────────────────────────────────────────────────────────────
+
+def _step_project(a: dict) -> Any:
+    _section("Project  [dim](1 / 10)[/dim]")
+    name = _text_required("Project name:", default=a.get("project_name", ""), can_go_back=False)
+    if name is _BACK:
+        return _BACK
+    desc = _text("Short description (optional):", default=a.get("project_description", ""), can_go_back=False)
+    if desc is _BACK:
+        return _BACK
+    return {"project_name": name, "project_description": desc}
+
+
+def _step_doc_types(a: dict) -> Any:
+    _section("Ingestion  [dim](2 / 10)[/dim]")
+    result = _checkbox(
         "Document types to ingest:",
         choices=["pdf", "docx", "txt", "html", "csv"],
-        default=["pdf", "docx"],
-        style=_STYLE,
-    ).ask()
+        defaults=a.get("document_types", ["pdf", "docx"]),
+    )
+    if result is _BACK:
+        return _BACK
+    return {"document_types": result}
 
-    # Screen 2 — Chunking
-    answers["chunking_strategy"] = questionary.select(
+
+def _step_chunking(a: dict) -> Any:
+    _section("Chunking  [dim](3 / 10)[/dim]")
+    strategy = _select(
         "Chunking strategy:",
         choices=["semantic", "fixed", "markdown"],
-        default="semantic",
-        style=_STYLE,
-    ).ask()
+        default=a.get("chunking_strategy", "semantic"),
+    )
+    if strategy is _BACK:
+        return _BACK
 
-    raw_chunk = questionary.text(
-        "Chunk size (tokens):",
-        default="512",
-        style=_STYLE,
-        validate=lambda v: v.isdigit() and int(v) > 0 or "Must be a positive integer",
-    ).ask()
-    answers["chunk_size"] = int(raw_chunk)
+    chunk_size = _int("Chunk size (tokens):", default=a.get("chunk_size", 512), min_val=1)
+    if chunk_size is _BACK:
+        return _BACK
 
-    raw_overlap = questionary.text(
-        "Overlap (tokens):",
-        default="64",
-        style=_STYLE,
-        validate=lambda v: v.isdigit() and int(v) >= 0 or "Must be a non-negative integer",
-    ).ask()
-    answers["overlap"] = int(raw_overlap)
+    overlap = _int("Overlap (tokens):", default=a.get("overlap", 64), min_val=0)
+    if overlap is _BACK:
+        return _BACK
 
-    # Screen 3 — Embedding model (live token-ceiling warning)
-    emb_model = questionary.select(
+    return {"chunking_strategy": strategy, "chunk_size": chunk_size, "overlap": overlap}
+
+
+def _step_embedding(a: dict) -> Any:
+    _section("Embedding  [dim](4 / 10)[/dim]")
+    model = _select(
         "Embedding model:",
         choices=_EMBEDDING_MODELS,
-        default="openai/text-embedding-3-small",
-        style=_STYLE,
-    ).ask()
-    answers["embedding_model"] = emb_model
+        default=a.get("embedding_model", "openai/text-embedding-3-small"),
+    )
+    if model is _BACK:
+        return _BACK
 
-    limit = _MODEL_TOKEN_LIMITS.get(emb_model, _DEFAULT_TOKEN_LIMIT)
-    if answers["chunk_size"] > limit:
-        import click
-        click.echo(
-            f"\n⚠  chunk_size={answers['chunk_size']} exceeds token limit={limit} "
-            f"for '{emb_model}'.\n"
-            f"   Reduce chunk_size or choose a model with a higher ceiling.\n"
+    updates: dict[str, Any] = {"embedding_model": model}
+
+    limit = _MODEL_TOKEN_LIMITS.get(model, _DEFAULT_TOKEN_LIMIT)
+    if a.get("chunk_size", 512) > limit:
+        _console.print(
+            f"\n  [yellow]⚠  chunk_size={a['chunk_size']} exceeds the token limit "
+            f"({limit}) for [bold]{model}[/bold].[/yellow]"
         )
-        raw_chunk2 = questionary.text(
-            f"Adjust chunk_size (must be ≤ {limit}):",
-            default=str(limit),
-            style=_STYLE,
-            validate=lambda v, lim=limit: (
-                v.isdigit() and 0 < int(v) <= lim
-                or f"Must be 1–{lim}"
-            ),
-        ).ask()
-        answers["chunk_size"] = int(raw_chunk2)
+        new_size = _int(f"Adjust chunk_size (max {limit}):", default=limit, min_val=1, max_val=limit)
+        if new_size is _BACK:
+            return _BACK
+        updates["chunk_size"] = new_size
 
-    # Screen 4 — Vector store
-    answers["vector_store_provider"] = questionary.select(
+    return updates
+
+
+def _step_vectorstore(a: dict) -> Any:
+    _section("Vector Store  [dim](5 / 10)[/dim]")
+    provider = _select(
         "Vector database:",
         choices=["chroma", "qdrant"],
-        default="chroma",
-        style=_STYLE,
-    ).ask()
+        default=a.get("vector_store_provider", "chroma"),
+    )
+    if provider is _BACK:
+        return _BACK
 
-    answers["vector_store_host"] = questionary.text(
-        "Vector store host:",
-        default="localhost",
-        style=_STYLE,
-    ).ask()
+    host = _text("Host:", default=a.get("vector_store_host", "localhost"))
+    if host is _BACK:
+        return _BACK
 
-    raw_port = questionary.text(
-        "Vector store port:",
-        default="8000",
-        style=_STYLE,
-        validate=lambda v: v.isdigit() and 1 <= int(v) <= 65535 or "Must be a valid port",
-    ).ask()
-    answers["vector_store_port"] = int(raw_port)
+    port = _int("Port:", default=a.get("vector_store_port", 8000), min_val=1, max_val=65535)
+    if port is _BACK:
+        return _BACK
 
-    answers["vector_store_collection"] = questionary.text(
+    collection = _text(
         "Collection name:",
-        default=answers["project_name"],
-        style=_STYLE,
-    ).ask()
+        default=a.get("vector_store_collection", a.get("project_name", "")),
+    )
+    if collection is _BACK:
+        return _BACK
 
-    # Screen 5 — Retrieval
-    answers["retrieval_strategy"] = questionary.select(
-        "Retrieval strategy:",
+    return {
+        "vector_store_provider": provider,
+        "vector_store_host": host,
+        "vector_store_port": port,
+        "vector_store_collection": collection,
+    }
+
+
+def _step_retrieval(a: dict) -> Any:
+    _section("Retrieval  [dim](6 / 10)[/dim]")
+    strategy = _select(
+        "Strategy:",
         choices=["dense", "hybrid", "rerank"],
-        default="hybrid",
-        style=_STYLE,
-    ).ask()
+        default=a.get("retrieval_strategy", "hybrid"),
+    )
+    if strategy is _BACK:
+        return _BACK
 
-    raw_topk = questionary.text(
-        "Top-K results:",
-        default="10",
-        style=_STYLE,
-        validate=lambda v: v.isdigit() and int(v) > 0 or "Must be a positive integer",
-    ).ask()
-    answers["top_k"] = int(raw_topk)
+    top_k = _int("Top-K results:", default=a.get("top_k", 10), min_val=1)
+    if top_k is _BACK:
+        return _BACK
 
-    if answers["retrieval_strategy"] == "rerank":
-        answers["reranker"] = questionary.select(
+    reranker = None
+    if strategy == "rerank":
+        reranker = _select(
             "Reranker model:",
             choices=["cohere/rerank-english-v3.0", "cohere/rerank-multilingual-v3.0"],
-            style=_STYLE,
-        ).ask()
-    else:
-        answers["reranker"] = None
+            default=a.get("reranker", "cohere/rerank-english-v3.0"),
+        )
+        if reranker is _BACK:
+            return _BACK
 
-    # Screen 6 — Generation
-    answers["llm_model"] = questionary.select(
+    return {"retrieval_strategy": strategy, "top_k": top_k, "reranker": reranker}
+
+
+def _step_generation(a: dict) -> Any:
+    _section("Generation  [dim](7 / 10)[/dim]")
+    model = _select(
         "LLM model:",
         choices=_LLM_MODELS,
-        default="openai/gpt-4o-mini",
-        style=_STYLE,
-    ).ask()
+        default=a.get("llm_model", "openai/gpt-4o-mini"),
+    )
+    if model is _BACK:
+        return _BACK
 
-    answers["citation_mode"] = questionary.select(
+    citation = _select(
         "Citation mode:",
         choices=["inline", "footnote", "none"],
-        default="inline",
-        style=_STYLE,
-    ).ask()
+        default=a.get("citation_mode", "inline"),
+    )
+    if citation is _BACK:
+        return _BACK
 
-    raw_tokens = questionary.text(
-        "Max output tokens:",
-        default="1024",
-        style=_STYLE,
-        validate=lambda v: v.isdigit() and int(v) > 0 or "Must be a positive integer",
-    ).ask()
-    answers["max_tokens"] = int(raw_tokens)
+    max_tokens = _int("Max output tokens:", default=a.get("max_tokens", 1024), min_val=1)
+    if max_tokens is _BACK:
+        return _BACK
 
-    # Screen 7 — Eval thresholds
-    for metric, defaults in [
+    return {"llm_model": model, "citation_mode": citation, "max_tokens": max_tokens}
+
+
+def _step_eval(a: dict) -> Any:
+    _section("Eval Thresholds  [dim](8 / 10)[/dim]")
+    updates: dict[str, Any] = {}
+    for metric, (wd, cd) in [
         ("faithfulness", (0.75, 0.60)),
         ("answer_relevance", (0.80, 0.65)),
     ]:
-        for level, default in [("warning", defaults[0]), ("critical", defaults[1])]:
-            key = f"{metric}_{level}"
-            raw = questionary.text(
-                f"Eval threshold — {metric} {level}:",
-                default=str(default),
-                style=_STYLE,
-                validate=lambda v: _is_float_01(v) or "Must be a float between 0 and 1",
-            ).ask()
-            answers[key] = float(raw)
+        warn = _float01(f"{metric} — warning threshold:", default=a.get(f"{metric}_warning", wd))
+        if warn is _BACK:
+            return _BACK
+        crit = _float01(f"{metric} — critical threshold:", default=a.get(f"{metric}_critical", cd))
+        if crit is _BACK:
+            return _BACK
+        updates[f"{metric}_warning"] = warn
+        updates[f"{metric}_critical"] = crit
 
-    raw_nq = questionary.text(
-        "Synthetic eval questions to generate:",
-        default="50",
-        style=_STYLE,
-        validate=lambda v: v.isdigit() and int(v) > 0 or "Must be a positive integer",
-    ).ask()
-    answers["num_questions"] = int(raw_nq)
+    nq = _int("Synthetic eval questions to generate:", default=a.get("num_questions", 50))
+    if nq is _BACK:
+        return _BACK
+    updates["num_questions"] = nq
+    return updates
 
-    # Screen 8 — Observability
-    answers["observability_backend"] = questionary.select(
-        "Observability backend:",
+
+def _step_observability(a: dict) -> Any:
+    _section("Observability  [dim](9 / 10)[/dim]")
+    backend = _select(
+        "Backend:",
         choices=["langfuse", "otlp", "none"],
-        default="langfuse",
-        style=_STYLE,
-    ).ask()
+        default=a.get("observability_backend", "langfuse"),
+    )
+    if backend is _BACK:
+        return _BACK
 
-    if answers["observability_backend"] != "none":
-        answers["observability_host"] = questionary.text(
-            "Observability host URL:",
-            default="http://localhost:3000",
-            style=_STYLE,
-        ).ask()
-    else:
-        answers["observability_host"] = ""
+    host = ""
+    if backend != "none":
+        host = _text(
+            "Host URL:",
+            default=a.get("observability_host", "http://localhost:3000"),
+        )
+        if host is _BACK:
+            return _BACK
 
-    # Screen 9 — Deployment
-    answers["deployment_target"] = questionary.select(
-        "Deployment target:",
+    return {"observability_backend": backend, "observability_host": host}
+
+
+def _step_deployment(a: dict) -> Any:
+    _section("Deployment  [dim](10 / 10)[/dim]")
+    target = _select(
+        "Target:",
         choices=["local", "docker", "cloud-run", "lambda", "aci"],
-        default="local",
-        style=_STYLE,
-    ).ask()
+        default=a.get("deployment_target", "local"),
+    )
+    if target is _BACK:
+        return _BACK
+    return {"deployment_target": target}
 
-    # Screen 10 — Confirmation
-    _print_summary(answers)
-    confirmed = questionary.confirm(
-        "Generate ragforge.yaml and project files?",
-        default=True,
-        style=_STYLE,
-    ).ask()
 
-    if not confirmed:
-        raise SystemExit(0)
+def _step_confirm(a: dict) -> Any:
+    _print_summary(a)
+    if not Confirm.ask("Generate ragforge.yaml and project files?", default=True, console=_console):
+        return _BACK
+    return {}
 
+
+# ── main entry point ──────────────────────────────────────────────────────────
+
+_STEPS = [
+    _step_project,
+    _step_doc_types,
+    _step_chunking,
+    _step_embedding,
+    _step_vectorstore,
+    _step_retrieval,
+    _step_generation,
+    _step_eval,
+    _step_observability,
+    _step_deployment,
+    _step_confirm,
+]
+
+
+def run_wizard() -> dict[str, Any]:
+    answers: dict[str, Any] = {}
+    i = 0
+    while i < len(_STEPS):
+        result = _STEPS[i](answers)
+        if result is _BACK:
+            i = max(0, i - 1)
+        else:
+            answers.update(result)
+            i += 1
     return answers
 
 
-def _is_float_01(value: str) -> bool:
-    try:
-        f = float(value)
-        return 0.0 <= f <= 1.0
-    except ValueError:
-        return False
+# ── summary ───────────────────────────────────────────────────────────────────
 
-
-def _print_summary(answers: dict[str, Any]) -> None:
-    import click
-    click.echo("\n─── Configuration Summary ───────────────────────────────")
-    click.echo(f"  Project      : {answers['project_name']}")
-    click.echo(f"  Doc types    : {', '.join(answers.get('document_types', []))}")
-    click.echo(f"  Chunking     : {answers['chunking_strategy']} / size={answers['chunk_size']} / overlap={answers['overlap']}")
-    click.echo(f"  Embedding    : {answers['embedding_model']}")
-    click.echo(f"  Vector store : {answers['vector_store_provider']} @ {answers['vector_store_host']}:{answers['vector_store_port']}")
-    click.echo(f"  Retrieval    : {answers['retrieval_strategy']} / top-k={answers['top_k']}")
-    click.echo(f"  LLM          : {answers['llm_model']} / citation={answers['citation_mode']}")
-    click.echo(f"  Observability: {answers['observability_backend']}")
-    click.echo(f"  Deploy to    : {answers['deployment_target']}")
-    click.echo("─────────────────────────────────────────────────────────\n")
+def _print_summary(a: dict[str, Any]) -> None:
+    _console.print("\n[bold]─── Configuration Summary ───────────────────────────────[/bold]")
+    _console.print(f"  Project      : [cyan]{a.get('project_name')}[/cyan]")
+    _console.print(f"  Doc types    : {', '.join(a.get('document_types', []))}")
+    _console.print(f"  Chunking     : {a.get('chunking_strategy')} / size={a.get('chunk_size')} / overlap={a.get('overlap')}")
+    _console.print(f"  Embedding    : {a.get('embedding_model')}")
+    _console.print(f"  Vector store : {a.get('vector_store_provider')} @ {a.get('vector_store_host')}:{a.get('vector_store_port')}")
+    _console.print(f"  Retrieval    : {a.get('retrieval_strategy')} / top-k={a.get('top_k')}")
+    _console.print(f"  LLM          : {a.get('llm_model')} / citation={a.get('citation_mode')}")
+    _console.print(f"  Observability: {a.get('observability_backend')}")
+    _console.print(f"  Deploy to    : {a.get('deployment_target')}")
+    _console.print("[bold]─────────────────────────────────────────────────────────[/bold]\n")

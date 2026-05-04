@@ -3,10 +3,8 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-import typer
-
 from ragforge.core.config import RagforgeConfig
-from ragforge.ui.console import print_header, print_success, print_next
+from ragforge.ui.console import print_header, print_next, print_success
 from ragforge.ui.wizard import run_wizard
 
 _ENV_EXAMPLE = """\
@@ -34,10 +32,7 @@ QDRANT_API_KEY=
 _QA_TEMPLATE_SRC = Path(__file__).parent.parent.parent.parent / "prompts" / "qa.jinja2"
 
 
-def init_command(
-    project_dir: Path = typer.Argument(Path("."), help="Directory to initialise"),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
-) -> None:
+def init_command(project_dir: Path = Path(".")) -> None:
     print_header("init")
 
     answers = run_wizard()

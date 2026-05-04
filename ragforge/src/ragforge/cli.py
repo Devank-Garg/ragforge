@@ -41,12 +41,11 @@ def _global_options(
 @app.command("init")
 def init(
     project_dir: str = typer.Argument(".", help="Directory to initialise"),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """Initialise a new RAGForge project via interactive wizard."""
     from pathlib import Path
     from ragforge.commands.init import init_command
-    _run(init_command, project_dir=Path(project_dir), yes=yes)
+    _run(init_command, project_dir=Path(project_dir))
 
 
 @app.command("ingest")
